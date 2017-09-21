@@ -71,13 +71,13 @@ PowerShellVersion = '5.0'
 FunctionsToExport = ('Convert-DSCEAresultsToCSV','Get-DSCEAreport','Send-DSCEACSVtoSQL','Start-DSCEAscan')
 
 # Cmdlets to export from this module
-CmdletsToExport = '*'
+CmdletsToExport = @()
 
 # Variables to export from this module
-VariablesToExport = '*'
+VariablesToExport = @()
 
 # Aliases to export from this module
-AliasesToExport = '*'
+AliasesToExport = @()
 
 # DSC resources to export from this module
 # DscResourcesToExport = @()
@@ -94,7 +94,7 @@ PrivateData = @{
     PSData = @{
 
         # Tags applied to this module. These help with module discovery in online galleries.
-        Tags = @('DesiredStateConfiguration', 'DSC', 'compliance', 'compliant', 'test', 'testing', 'report', 'reporting', 'audit', 'auditing', 'config', 'configuration', 'security', 'lockdown', 'harden', 'hardening', 'Test-DscConfiguration')
+        Tags = @('DesiredStateConfiguration', 'DSC', 'compliance', 'compliant', 'scan', 'scanning', 'baseline', 'test', 'testing', 'report', 'reporting', 'audit', 'auditing', 'config', 'configuration', 'security', 'baseline', 'baselines', 'lockdown', 'harden', 'hardening', 'Test-DscConfiguration')
 
         # A URL to the license for this module.
         LicenseUri = 'https://github.com/Microsoft/DSCEA/blob/master/LICENSE'
