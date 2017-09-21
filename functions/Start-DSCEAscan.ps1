@@ -109,6 +109,7 @@ param
         [parameter(Mandatory=$true,ParameterSetName='ComputerName')]
         [parameter(Mandatory=$true,ParameterSetName='InputFile')]
         [parameter(Mandatory=$true,ParameterSetName='CimSession')]
+        [parameter(Mandatory=$true,ParameterSetName='localhost')]
         [ValidatePattern("\.mof$")]
         [string]$MofFile,
 
@@ -122,6 +123,9 @@ param
         [string]$ScanTimeout = 3600,
 
         [switch]$Force,
+
+        [parameter(ParameterSetName='localhost')]
+        [switch]$localhost,
 
         [ValidateNotNullOrEmpty()]
         [string]$ResultsFile = "results.$(Get-Date -Format 'yyyyMMdd-HHmm-ss').xml",
@@ -152,6 +156,8 @@ param
             [string]$JobTimeout,
 
             [switch]$Force,
+
+            [switch]$localhost,
 
             $ModulesRequired,
 
@@ -186,10 +192,14 @@ param
                 if($PSBoundParameters.ContainsKey('CimSession')) {
                     $DSCJob = Test-DSCConfiguration -ReferenceConfiguration $mofFile -CimSession $CimSession -AsJob | Wait-Job -Timeout $JobTimeout
                 }
-                else {
-                    
+                else {               
                     $DSCJob = Test-DSCConfiguration -ReferenceConfiguration $mofFile -CimSession $computer -AsJob | Wait-Job -Timeout $JobTimeout
                 }
+                
+                if($PSBoundParameters.ContainsKey('localhost')) {
+                    $DSCJob = Test-DscConfiguration -ReferenceConfiguration $mofFile -ComputerName localhost -AsJob | Wait-Job -Timeout $JobTimeout
+                }
+                
                 if (!$DSCJob) { 
                     $JobFailedError = "$computer was unable to complete in the alloted job timeout period of $JobTimeout seconds"
                     for ($i=1; $i -lt 10; $i++) { 
@@ -351,6 +361,55 @@ param
         }
     }
 
+    if($PSBoundParameters.ContainsKey('localhost')){
+        $WinRMStatus = (Get-Service -Name WinRM).Status
+        if($WinRMStatus -ne 'Running'){
+        $WinRMWasOff = $true
+        Write-Warning 'The WinRM service on the localhost system was not in the Running state.  This service has been started to allow the scan to proceed, it will be returned to a Stopped state once the scan is completed.'
+        Start-Service -Name WinRM
+        }
+
+        $MofFile = (Get-Item $MofFile).FullName
+      #  $ModulesRequired = Get-MOFRequiredModules -mofFile $MofFile
+      #  $firstrunlist = $ComputerName
+      #  $psresults = Invoke-Command -ComputerName $firstrunlist -ErrorAction SilentlyContinue -AsJob -ScriptBlock {
+      #      $PSVersionTable.PSVersion
+      #  } | Wait-Job -Timeout $JobTimeout
+
+        $psresults = Test-DscConfiguration -ReferenceConfiguration $mofFile -ComputerName localhost -AsJob | Wait-Job -Timeout $JobTimeout
+
+        $psjobresults = Receive-Job $psresults
+
+        $runlist =  ($psjobresults).PSComputername
+     #   $versionerrorlist =  ($psjobresults | where-object -Property Major -lt 5).PSComputername
+
+     #   $PSVersionErrorsFile = Join-Path -Path $LogsPath -Childpath ('PSVersionErrors.{0}.xml' -f (Get-Date -Format 'yyyyMMdd-HHmm-ss'))
+    <#
+        Write-Verbose "Connectivity testing complete"
+        if ($versionerrorlist){
+            Write-Warning "The following systems cannot be scanned as they are not running PowerShell 5.  Please check '$versionerrorlist' for details"
+        }
+    #>
+        $RunList | ForEach-Object {
+            $params = @{
+                Computer = $_
+                MofFile = $MofFile
+                JobTimeout = $JobTimeout
+                ModulesRequired = $ModulesRequired
+                FunctionRoot = $functionRoot
+            }
+            if ($PSBoundParameters.ContainsKey('Force')) {
+                $params += @{Force = $true}
+            }
+            $job = [Powershell]::Create().AddScript($scriptBlock).AddParameters($params)
+            Write-Verbose "Initiating DSCEA scan on $_"
+		    $job.RunSpacePool = $runspacePool
+            $jobs += [PSCustomObject]@{
+                    Pipe = $job
+                    Result = $job.BeginInvoke()
+            }
+        }
+    }
 
     #Wait for Jobs to Complete
     Write-Verbose "Processing Compliance Testing..."
@@ -361,8 +420,10 @@ param
         $jobscomplete = ($jobs.result.iscompleted | Where-Object {$_ -eq $true}).count
 
         #pecentage complete can be added as the number of jobs completed out of the number of total jobs
+        if (!$localhost) { 
         Write-Progress -activity "Working..." -PercentComplete (($jobscomplete / $jobs.count)*100) -status "$([string]::Format("Time Elapsed: {0:d2}:{1:d2}:{2:d2}     Jobs Complete: {3} of {4} ", $elapsedTime.Elapsed.hours, $elapsedTime.Elapsed.minutes, $elapsedTime.Elapsed.seconds, $jobscomplete, $jobs.count))";
-       
+        }
+
         if ($elapsedTime.elapsed -gt $overalltimeout) {
             Write-Warning "The DSCEA scan was unable to complete because the timeout value of $($overalltimeout.TotalSeconds) seconds was exceeded."
             return
@@ -392,6 +453,10 @@ param
 
     if ($results.Exception){
         Write-Warning "The DSCEA scan completed but job errors were detected.  Please check '$ResultsFile' for details"
+    }
+
+    if($WinRMWasOff){
+        Stop-Service -Name WinRM
     }
 
 }
