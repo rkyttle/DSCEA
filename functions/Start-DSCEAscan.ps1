@@ -362,6 +362,7 @@ param
     }
 
     if($PSBoundParameters.ContainsKey('localhost')){
+        $elapsedTime = [system.diagnostics.stopwatch]::StartNew()
         $WinRMStatus = (Get-Service -Name WinRM).Status
         if($WinRMStatus -ne 'Running'){
         $WinRMWasOff = $true
@@ -370,45 +371,18 @@ param
         }
 
         $MofFile = (Get-Item $MofFile).FullName
-      #  $ModulesRequired = Get-MOFRequiredModules -mofFile $MofFile
-      #  $firstrunlist = $ComputerName
-      #  $psresults = Invoke-Command -ComputerName $firstrunlist -ErrorAction SilentlyContinue -AsJob -ScriptBlock {
-      #      $PSVersionTable.PSVersion
-      #  } | Wait-Job -Timeout $JobTimeout
+        $results = Test-DscConfiguration -ReferenceConfiguration $mofFile -ComputerName localhost
 
-        $psresults = Test-DscConfiguration -ReferenceConfiguration $mofFile -ComputerName localhost -AsJob | Wait-Job -Timeout $JobTimeout
+        Write-Verbose "$([string]::Format("Total Scan Time: {0:d2}:{1:d2}:{2:d2}", $elapsedTime.Elapsed.hours, $elapsedTime.Elapsed.minutes, $elapsedTime.Elapsed.seconds))"
+        $results | Export-Clixml -Path (Join-Path  -Path $OutputPath -Child $ResultsFile) -Force
+        Get-ItemProperty (Join-Path  -Path $OutputPath -Child $ResultsFile)
 
-        $psjobresults = Receive-Job $psresults
-
-        $runlist =  ($psjobresults).PSComputername
-     #   $versionerrorlist =  ($psjobresults | where-object -Property Major -lt 5).PSComputername
-
-     #   $PSVersionErrorsFile = Join-Path -Path $LogsPath -Childpath ('PSVersionErrors.{0}.xml' -f (Get-Date -Format 'yyyyMMdd-HHmm-ss'))
-    <#
-        Write-Verbose "Connectivity testing complete"
-        if ($versionerrorlist){
-            Write-Warning "The following systems cannot be scanned as they are not running PowerShell 5.  Please check '$versionerrorlist' for details"
+        if($WinRMWasOff){
+        Stop-Service -Name WinRM
         }
-    #>
-        $RunList | ForEach-Object {
-            $params = @{
-                Computer = $_
-                MofFile = $MofFile
-                JobTimeout = $JobTimeout
-                ModulesRequired = $ModulesRequired
-                FunctionRoot = $functionRoot
-            }
-            if ($PSBoundParameters.ContainsKey('Force')) {
-                $params += @{Force = $true}
-            }
-            $job = [Powershell]::Create().AddScript($scriptBlock).AddParameters($params)
-            Write-Verbose "Initiating DSCEA scan on $_"
-		    $job.RunSpacePool = $runspacePool
-            $jobs += [PSCustomObject]@{
-                    Pipe = $job
-                    Result = $job.BeginInvoke()
-            }
-        }
+
+        break
+
     }
 
     #Wait for Jobs to Complete
@@ -453,10 +427,6 @@ param
 
     if ($results.Exception){
         Write-Warning "The DSCEA scan completed but job errors were detected.  Please check '$ResultsFile' for details"
-    }
-
-    if($WinRMWasOff){
-        Stop-Service -Name WinRM
     }
 
 }
