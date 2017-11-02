@@ -196,10 +196,6 @@ param
                     $DSCJob = Test-DSCConfiguration -ReferenceConfiguration $mofFile -CimSession $computer -AsJob | Wait-Job -Timeout $JobTimeout
                 }
                 
-                if($PSBoundParameters.ContainsKey('localhost')) {
-                    $DSCJob = Test-DscConfiguration -ReferenceConfiguration $mofFile -ComputerName localhost -AsJob | Wait-Job -Timeout $JobTimeout
-                }
-                
                 if (!$DSCJob) { 
                     $JobFailedError = "$computer was unable to complete in the alloted job timeout period of $JobTimeout seconds"
                     for ($i=1; $i -lt 10; $i++) { 
@@ -362,26 +358,36 @@ param
     }
 
     if($PSBoundParameters.ContainsKey('localhost')){
-        $elapsedTime = [system.diagnostics.stopwatch]::StartNew()
+        $MofFile = (Get-Item $MofFile).FullName
         $WinRMStatus = (Get-Service -Name WinRM).Status
         if($WinRMStatus -ne 'Running'){
         $WinRMWasOff = $true
         Write-Warning 'The WinRM service on the localhost system was not in the Running state.  This service has been started to allow the scan to proceed, it will be returned to a Stopped state once the scan is completed.'
-        Start-Service -Name WinRM
+        Start-Service -Name WinRM -Verbose
+        }
+        
+        $RunList = 'localhost'
+        $RunList | ForEach-Object {
+            $params = @{
+                Computer = $_
+                MofFile = $MofFile
+                JobTimeout = $JobTimeout
+                ModulesRequired = $ModulesRequired
+                FunctionRoot = $functionRoot
+            }
+            if ($PSBoundParameters.ContainsKey('Force')) {
+                $params += @{Force = $true}
+            }
+            $job = [Powershell]::Create().AddScript($scriptBlock).AddParameters($params)
+            Write-Verbose "Initiating DSCEA scan on $_"
+		    $job.RunSpacePool = $runspacePool
+            $jobs += [PSCustomObject]@{
+                    Pipe = $job
+                    Result = $job.BeginInvoke()
+            }
         }
 
-        $MofFile = (Get-Item $MofFile).FullName
-        $results = Test-DscConfiguration -ReferenceConfiguration $mofFile -ComputerName localhost
 
-        Write-Verbose "$([string]::Format("Total Scan Time: {0:d2}:{1:d2}:{2:d2}", $elapsedTime.Elapsed.hours, $elapsedTime.Elapsed.minutes, $elapsedTime.Elapsed.seconds))"
-        $results | Export-Clixml -Path (Join-Path  -Path $OutputPath -Child $ResultsFile) -Force
-        Get-ItemProperty (Join-Path  -Path $OutputPath -Child $ResultsFile)
-
-        if($WinRMWasOff){
-        Stop-Service -Name WinRM
-        }
-
-        break
 
     }
 
@@ -408,6 +414,11 @@ param
     $jobs | ForEach-Object {
         $results += $_.Pipe.EndInvoke($_.Result)
     }
+
+    #Localhost
+    if($WinRMWasOff){
+        Stop-Service -Name WinRM
+        }
 
     ForEach ($exceptionwarning in $results.Exception) {
         Write-Warning $exceptionwarning
